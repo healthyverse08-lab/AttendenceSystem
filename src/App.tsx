@@ -9,6 +9,7 @@ import { DashboardRedirect } from '@/features/dashboard/DashboardRedirect';
 import { FullPageLoader } from '@/components/FullPageLoader';
 import { AdminRoutes } from '@/features/administrator/AdminRoutes';
 import { LecturerRoutes } from '@/features/lecturer/LecturerRoutes';
+import { StudentRoutes } from '@/features/student/StudentRoutes';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeProvider } from 'next-themes';
 
@@ -25,6 +26,7 @@ function RootRedirect() {
   if (status === 'authenticated') {
     if (role === 'super_admin' || role === 'administrator') return <Navigate to="/admin" replace />;
     if (role === 'lecturer') return <Navigate to="/lecturer" replace />;
+    if (role === 'student') return <Navigate to="/student" replace />;
     return <Navigate to="/dashboard" replace />;
   }
   return <Navigate to="/login" replace />;
@@ -43,6 +45,7 @@ export default function App() {
               <Route path="/auth/callback" element={<RootRedirect />} />
               <Route path="/admin/*" element={<AdminRoutes />} />
               <Route path="/lecturer/*" element={<LecturerRoutes />} />
+              <Route path="/student/*" element={<StudentRoutes />} />
               <Route
                 path="/dashboard"
                 element={
