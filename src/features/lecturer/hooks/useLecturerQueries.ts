@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/authentication/AuthContext';
 import type {
@@ -285,11 +286,13 @@ export function useSessionRecords(sessionId: string | null | undefined) {
 
 export function useUpsertManualRecord() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: async (input: {
       attendance_session_id: string;
       student_id: string;
       status: AttendanceRecordStatus;
+      reason?: string;
     }) => {
       // Check for existing record
       const { data: existing } = await supabase
@@ -302,11 +305,18 @@ export function useUpsertManualRecord() {
       if (existing) {
         const { data, error } = await supabase
           .from('attendance_records')
-          .update({ status: input.status })
+          .update({ status: input.status, manual_reason: input.reason ?? null, is_manual: true, recorded_by: user?.id ?? null })
           .eq('id', existing.id)
           .select()
           .single();
         if (error) throw error;
+        await supabase.from('audit_logs').insert({
+          actor_id: user?.id ?? null,
+          action: 'manual_attendance',
+          entity_type: 'attendance_records',
+          entity_id: existing.id,
+          metadata: { session_id: input.attendance_session_id, student_id: input.student_id, status: input.status, reason: input.reason },
+        });
         return data as AttendanceRecord;
       }
 
@@ -316,17 +326,97 @@ export function useUpsertManualRecord() {
           attendance_session_id: input.attendance_session_id,
           student_id: input.student_id,
           status: input.status,
+          manual_reason: input.reason ?? null,
+          is_manual: true,
+          recorded_by: user?.id ?? null,
           submitted_at: new Date().toISOString(),
         })
         .select()
         .single();
       if (error) throw error;
+      await supabase.from('audit_logs').insert({
+        actor_id: user?.id ?? null,
+        action: 'manual_attendance',
+        entity_type: 'attendance_records',
+        entity_id: data.id,
+        metadata: { session_id: input.attendance_session_id, student_id: input.student_id, status: input.status, reason: input.reason },
+      });
       return data as AttendanceRecord;
     },
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: KEYS.records(vars.attendance_session_id) });
     },
   });
+}
+
+// ============================================================
+// QR TOKEN — fetch current rotating QR token from edge function
+// ============================================================
+
+export interface QrTokenResponse {
+  session_id: string;
+  token: string;
+  expires_at: string;
+  rotation_seconds: number;
+  grace_period_seconds: number;
+  rotation_number: number;
+}
+
+export function useQrToken(sessionId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['lecturer', 'qr-token', sessionId ?? ''],
+    enabled: !!sessionId,
+    refetchInterval: !!sessionId ? 8_000 : false,
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('qr-token', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        body: undefined,
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data as QrTokenResponse;
+    },
+  });
+}
+
+// ============================================================
+// REAL-TIME — live attendance records via Supabase Realtime
+// ============================================================
+
+export function useRealtimeSessionRecords(sessionId: string | null | undefined) {
+  return useQuery({
+    queryKey: KEYS.records(sessionId ?? ''),
+    enabled: !!sessionId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('attendance_records')
+        .select('*, student:students(*, user:users(*))')
+        .eq('attendance_session_id', sessionId!)
+        .order('submitted_at', { ascending: true });
+      if (error) throw error;
+      return (data as unknown as AttendanceRecordView[]) ?? [];
+    },
+  });
+}
+
+export function useSubscribeToSessionRecords(sessionId: string | null | undefined) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!sessionId) return;
+    const channel = supabase
+      .channel(`attendance_records:session=${sessionId}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'attendance_records', filter: `attendance_session_id=eq.${sessionId}` },
+        () => qc.invalidateQueries({ queryKey: KEYS.records(sessionId) })
+      )
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'attendance_records', filter: `attendance_session_id=eq.${sessionId}` },
+        () => qc.invalidateQueries({ queryKey: KEYS.records(sessionId) })
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [sessionId, qc]);
 }
 
 // ============================================================

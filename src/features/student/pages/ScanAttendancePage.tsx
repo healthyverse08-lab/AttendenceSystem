@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { QrCode, Camera, CameraOff, CircleCheck as CheckCircle2, Circle as XCircle, RefreshCw, ScanLine, CircleAlert as AlertCircle } from 'lucide-react';
+import { QrCode, Camera, CameraOff, CircleCheck as CheckCircle2, Circle as XCircle, RefreshCw, ScanLine, CircleAlert as AlertCircle, BookOpen, Clock, Hash, ShieldCheck } from 'lucide-react';
 import { useSubmitAttendance } from '../hooks/useStudentQueries';
 import { PageHeader } from '@/features/administrator/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,7 +20,14 @@ export default function ScanAttendancePage() {
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [manualToken, setManualToken] = useState('');
-  const [lastResult, setLastResult] = useState<{ subject?: string; date?: string } | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    subject?: string;
+    subject_code?: string;
+    date?: string;
+    session_id?: string;
+    internal_session_id?: string;
+    recorded_at?: string;
+  } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const submitMut = useSubmitAttendance();
@@ -72,17 +79,24 @@ export default function ScanAttendancePage() {
     stopCamera();
     try {
       const result = await submitMut.mutateAsync({ session_id: sessionId, qr_token: qrToken });
+      const details = result?.session_details;
       setLastResult({
-        subject: result?.record?.subject ?? 'Session',
-        date: new Date().toLocaleString(),
+        subject: details?.subject_name ?? 'Session',
+        subject_code: details?.subject_code,
+        session_id: details?.session_id,
+        internal_session_id: details?.internal_session_id,
+        recorded_at: details?.recorded_at ?? new Date().toISOString(),
+        date: new Date(details?.recorded_at ?? Date.now()).toLocaleString(),
       });
       setScanState('success');
       toast.success('Attendance marked successfully!');
+      if (navigator.vibrate) navigator.vibrate(200);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to submit attendance.';
       setErrorMessage(msg);
       setScanState('error');
       toast.error(msg);
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
     }
   }
 
@@ -200,23 +214,40 @@ export default function ScanAttendancePage() {
               exit={{ opacity: 0 }}
             >
               <Card className="border-emerald-200">
-                <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                   <motion.div
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: 'spring', damping: 12, stiffness: 200 }}
-                    className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100"
+                    className="mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-emerald-100"
                   >
-                    <CheckCircle2 className="h-12 w-12 text-emerald-600" strokeWidth={1.5} />
+                    <CheckCircle2 className="h-14 w-14 text-emerald-600" strokeWidth={1.5} />
                   </motion.div>
-                  <h3 className="text-xl font-semibold text-slate-900">Attendance Marked!</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Your attendance has been recorded successfully.
-                  </p>
+                  <h3 className="text-xl font-semibold text-slate-900">Attendance Recorded Successfully</h3>
+                  <p className="mt-1 text-sm text-slate-500">Your attendance has been confirmed.</p>
                   {lastResult && (
-                    <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-left">
-                      <p className="text-sm font-medium text-slate-800">{lastResult.subject}</p>
-                      <p className="text-xs text-slate-500">{lastResult.date}</p>
+                    <div className="mt-6 w-full max-w-sm space-y-2 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-left">
+                      <div className="flex items-center gap-2 text-sm">
+                        <BookOpen className="h-4 w-4 text-slate-400" />
+                        <span className="font-medium text-slate-800">{lastResult.subject}</span>
+                        {lastResult.subject_code && (
+                          <span className="text-xs text-slate-500">({lastResult.subject_code})</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Clock className="h-3.5 w-3.5" />
+                        <span>{lastResult.date}</span>
+                      </div>
+                      {lastResult.internal_session_id && (
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          <Hash className="h-3.5 w-3.5" />
+                          <span>Session: {lastResult.internal_session_id}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 pt-1 text-xs text-emerald-600">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        <span>Verified via QR token</span>
+                      </div>
                     </div>
                   )}
                   <div className="mt-6 flex gap-3">

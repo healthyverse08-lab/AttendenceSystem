@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  ClipboardCheck, Search, Check, X, Clock, Save, ArrowLeft,
+  ClipboardCheck, Search, Check, X, Clock, Save, ArrowLeft, MessageSquare,
 } from 'lucide-react';
 import {
   useLecturerSessions, useStudentsForSections, useSessionRecords, useUpsertManualRecord,
@@ -11,7 +11,9 @@ import { PageHeader } from '@/features/administrator/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -28,6 +30,7 @@ export default function ManualAttendancePage() {
   const [sessionId, setSessionId] = useState<string>('');
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<Record<string, AttendanceRecordStatus>>({});
+  const [globalReason, setGlobalReason] = useState('');
 
   const selectedSession = useMemo(
     () => sessions.find((s) => s.id === sessionId),
@@ -66,6 +69,7 @@ export default function ManualAttendancePage() {
         attendance_session_id: sessionId,
         student_id: studentId,
         status,
+        reason: globalReason || undefined,
       });
       setPending((p) => {
         const next = { ...p };
@@ -83,7 +87,12 @@ export default function ManualAttendancePage() {
     try {
       await Promise.all(
         Object.entries(pending).map(([studentId, status]) =>
-          upsertRecord.mutateAsync({ attendance_session_id: sessionId, student_id: studentId, status })
+          upsertRecord.mutateAsync({
+            attendance_session_id: sessionId,
+            student_id: studentId,
+            status,
+            reason: globalReason || undefined,
+          })
         )
       );
       setPending({});
@@ -170,6 +179,24 @@ export default function ManualAttendancePage() {
               </Button>
             )}
           </div>
+
+          {/* Global reason input */}
+          <Card>
+            <CardContent className="p-4">
+              <Label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <MessageSquare className="h-4 w-4 text-slate-400" />
+                Reason for Manual Attendance (optional, applies to all saves)
+              </Label>
+              <Textarea
+                className="mt-2"
+                placeholder="e.g. Student arrived late due to bus delay, medical emergency, etc."
+                value={globalReason}
+                onChange={(e) => setGlobalReason(e.target.value)}
+                rows={2}
+              />
+              <p className="mt-1 text-xs text-slate-500">This reason is logged in the audit trail for each manual attendance record.</p>
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>

@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import QRCode from 'qrcode';
+import { Activity, Clock, Users, QrCode, CircleStop as StopCircle, RefreshCw, CircleCheck as CheckCircle2, Circle as XCircle } from 'lucide-react';
 import {
-  Activity, Clock, Users, QrCode, StopCircle, RefreshCw, CheckCircle2, XCircle,
-} from 'lucide-react';
-import {
-  useActiveLecturerSession, useSessionRecords, useEndAttendance,
+  useActiveLecturerSession, useRealtimeSessionRecords, useEndAttendance,
+  useQrToken, useSubscribeToSessionRecords,
 } from '../hooks/useLecturerQueries';
 import { PageHeader } from '@/features/administrator/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +30,8 @@ function fmtTime(seconds: number) {
 export default function ActiveSessionPage() {
   const navigate = useNavigate();
   const { data: session, isLoading } = useActiveLecturerSession();
-  const { data: records = [] } = useSessionRecords(session?.id);
+  const { data: records = [] } = useRealtimeSessionRecords(session?.id);
+  useSubscribeToSessionRecords(session?.id);
   const endAttendance = useEndAttendance();
   const [endOpen, setEndOpen] = useState(false);
   const [remaining, setRemaining] = useState(0);
@@ -130,20 +131,7 @@ export default function ActiveSessionPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* QR + Timer */}
         <div className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><QrCode className="h-4 w-4" /> QR Code</CardTitle></CardHeader>
-            <CardContent className="flex flex-col items-center gap-4">
-              <div className="flex h-56 w-56 items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50">
-                <div className="text-center">
-                  <QrCode className="mx-auto h-16 w-16 text-slate-300" strokeWidth={1.5} />
-                  <p className="mt-2 text-xs text-slate-400">QR rotation in Prompt 5</p>
-                </div>
-              </div>
-              <p className="text-xs text-slate-500 text-center">
-                Display this QR code for students to scan and mark attendance.
-              </p>
-            </CardContent>
-          </Card>
+          <QrDisplay sessionId={session.id} rotationSeconds={session.qr_rotation_seconds} />
 
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> Time Remaining</CardTitle></CardHeader>
@@ -178,7 +166,7 @@ export default function ActiveSessionPage() {
                   {summary.percentage}% · {bandStyle.label}
                 </Badge>
                 <span className="flex items-center gap-1 text-xs text-slate-400">
-                  <RefreshCw className="h-3 w-3 animate-spin" /> Auto-refresh
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Real-time
                 </span>
               </div>
             </CardHeader>
@@ -206,7 +194,9 @@ export default function ActiveSessionPage() {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-slate-800">{r.student?.user?.full_name ?? 'Unknown'}</p>
-                            <p className="text-xs text-slate-500">{r.student?.student_id}</p>
+                            <p className="text-xs text-slate-500">
+                              {r.student?.student_id} · {new Date(r.submitted_at).toLocaleTimeString()}
+                            </p>
                           </div>
                         </div>
                         <RecordStatusBadge status={r.status} />
@@ -241,6 +231,102 @@ export default function ActiveSessionPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ============================================================
+// QR Display — auto-rotating QR code with countdown ring
+// ============================================================
+
+function QrDisplay({ sessionId, rotationSeconds }: { sessionId: string; rotationSeconds: number }) {
+  const { data: qrData, isLoading } = useQrToken(sessionId);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [countdown, setCountdown] = useState(rotationSeconds);
+
+  // Generate QR code image when token changes
+  useEffect(() => {
+    if (!qrData?.token) return;
+    const payload = JSON.stringify({
+      session_id: qrData.session_id,
+      token: qrData.token,
+      exp: qrData.expires_at,
+    });
+    QRCode.toDataURL(payload, {
+      width: 320,
+      margin: 2,
+      color: { dark: '#0f172a', light: '#ffffff' },
+      errorCorrectionLevel: 'M',
+    }).then(setQrDataUrl).catch(() => setQrDataUrl(''));
+  }, [qrData?.token]);
+
+  // Countdown until next rotation
+  useEffect(() => {
+    if (!qrData?.expires_at) return;
+    const tick = () => {
+      const ms = new Date(qrData.expires_at).getTime() - Date.now();
+      setCountdown(Math.max(0, Math.ceil(ms / 1000)));
+    };
+    tick();
+    const interval = setInterval(tick, 500);
+    return () => clearInterval(interval);
+  }, [qrData?.expires_at]);
+
+  const progress = qrData ? (countdown / (qrData.rotation_seconds || rotationSeconds)) * 100 : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2"><QrCode className="h-4 w-4" /> QR Code</span>
+          {qrData && (
+            <Badge variant="outline" className="text-xs">
+              Rotation #{qrData.rotation_number}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center gap-4">
+        <div className="relative">
+          <div className="flex h-56 w-56 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white p-2">
+            {isLoading || !qrDataUrl ? (
+              <div className="flex h-full w-full items-center justify-center rounded-xl bg-slate-50">
+                <RefreshCw className="h-8 w-8 animate-spin text-slate-300" />
+              </div>
+            ) : (
+              <motion.img
+                key={qrData?.token}
+                src={qrDataUrl}
+                alt="Attendance QR Code"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+                className="h-full w-full rounded-xl"
+              />
+            )}
+          </div>
+          {/* Countdown ring */}
+          <svg className="absolute -right-2 -top-2 h-12 w-12 -rotate-90" viewBox="0 0 48 48">
+            <circle cx="24" cy="24" r="20" fill="none" stroke="#e2e8f0" strokeWidth="4" />
+            <circle
+              cx="24" cy="24" r="20" fill="none"
+              stroke={countdown <= 3 ? '#f43f5e' : '#0ea5e9'}
+              strokeWidth="4"
+              strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 20}
+              strokeDashoffset={2 * Math.PI * 20 * (1 - progress / 100)}
+              className="transition-all duration-500"
+            />
+          </svg>
+        </div>
+        <div className="text-center">
+          <p className="text-2xl font-bold tabular-nums text-slate-900">{countdown}s</p>
+          <p className="text-xs text-slate-500">
+            Auto-rotates every {qrData?.rotation_seconds ?? rotationSeconds}s
+            {qrData?.grace_period_seconds ? ` · ${qrData.grace_period_seconds}s grace` : ''}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
