@@ -28,6 +28,10 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Missing Authorization header." }, 401);
     }
 
+    const userAgent = req.headers.get("user-agent") ?? "unknown";
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? null;
+    const deviceInfo = { user_agent: userAgent, ip: clientIp };
+
     // Client that runs AS the user (respects RLS) to resolve the auth user.
     const userClient = createClient(supabaseUrl, anonKey ?? serviceRoleKey, {
       global: { headers: { Authorization: authHeader } },
@@ -41,6 +45,7 @@ Deno.serve(async (req: Request) => {
 
     // Domain restriction — only @techspire.edu.np
     if (!email.toLowerCase().endsWith(`@${ALLOWED_DOMAIN}`)) {
+      await auditLogAdmin(supabaseUrl, serviceRoleKey, authUser.id, null, "login_denied", "users", authUser.id, { reason: "invalid_email_domain", email }, deviceInfo);
       return json({ error: "Access denied. Use an official Techspire College Google Account." }, 403);
     }
 
@@ -87,15 +92,18 @@ Deno.serve(async (req: Request) => {
         entity_type: "users",
         entity_id: authUser.id,
         metadata: { email },
+        ip_address: clientIp,
+        device_info: deviceInfo,
       });
     }
 
     if (!userRow) {
-      // Not pre-registered → reject
+      await auditLogAdmin(supabaseUrl, serviceRoleKey, authUser.id, null, "login_denied", "users", authUser.id, { reason: "not_registered", email }, deviceInfo);
       return json({ error: "You are not registered in TSAMS. Contact an administrator." }, 403);
     }
 
     if (userRow.status !== "active") {
+      await auditLogAdmin(supabaseUrl, serviceRoleKey, authUser.id, userRow.role, "login_denied", "users", authUser.id, { reason: `account_${userRow.status}`, email }, deviceInfo);
       return json({ error: `Your account is ${userRow.status}. Contact an administrator.` }, 403);
     }
 
@@ -121,6 +129,19 @@ Deno.serve(async (req: Request) => {
       profile = (await admin.from("students").select("*").eq("user_id", authUser.id).maybeSingle()).data;
     }
 
+    // Audit log: successful login
+    await admin.from("audit_logs").insert({
+      actor_id: authUser.id,
+      role: userRow.role,
+      action: "user_login",
+      description: `${userRow.full_name} (${userRow.role}) signed in`,
+      entity_type: "users",
+      entity_id: authUser.id,
+      metadata: { email, role: userRow.role },
+      ip_address: clientIp,
+      device_info: deviceInfo,
+    });
+
     return json({ user: userRow, role: userRow.role, profile }, 200);
   } catch (err) {
     console.error("auth-session error:", err);
@@ -133,4 +154,33 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function auditLogAdmin(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  actorId: string,
+  role: string | null,
+  action: string,
+  entityType: string | null,
+  entityId: string | null,
+  metadata: Record<string, unknown>,
+  deviceInfo: Record<string, unknown>
+) {
+  try {
+    const admin = createClient(supabaseUrl, serviceRoleKey);
+    await admin.from("audit_logs").insert({
+      actor_id: actorId,
+      role,
+      action,
+      description: `Login attempt denied: ${metadata.reason ?? 'unknown'}`,
+      entity_type: entityType,
+      entity_id: entityId,
+      metadata,
+      ip_address: deviceInfo.ip ?? null,
+      device_info: deviceInfo,
+    });
+  } catch (e) {
+    console.error("Failed to write audit log:", e);
+  }
 }

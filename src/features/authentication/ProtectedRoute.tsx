@@ -15,6 +15,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
 
   if (status === 'loading') return <FullPageLoader />;
   if (status === 'denied') return <Navigate to="/access-denied" replace />;
+  if (status === 'expired') return <Navigate to="/access-denied" replace />;
   if (status === 'unauthenticated') {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }

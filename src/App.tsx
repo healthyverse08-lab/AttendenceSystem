@@ -22,7 +22,7 @@ const queryClient = new QueryClient({
 function RootRedirect() {
   const { status, role } = useAuth();
   if (status === 'loading') return <FullPageLoader />;
-  if (status === 'denied') return <Navigate to="/access-denied" replace />;
+  if (status === 'denied' || status === 'expired') return <Navigate to="/access-denied" replace />;
   if (status === 'authenticated') {
     if (role === 'super_admin' || role === 'administrator') return <Navigate to="/admin" replace />;
     if (role === 'lecturer') return <Navigate to="/lecturer" replace />;

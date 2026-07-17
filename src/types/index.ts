@@ -195,10 +195,13 @@ export interface AuditLog {
   id: string;
   actor_id: string | null;
   action: string;
+  description: string | null;
+  role: string | null;
   entity_type: string | null;
   entity_id: string | null;
   metadata: Record<string, unknown> | null;
   ip_address: string | null;
+  device_info: Record<string, unknown> | null;
   created_at: string;
 }
 

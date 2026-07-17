@@ -13,6 +13,7 @@ interface RoleGuardProps {
 export function RoleGuard({ allowedRoles, children, fallback = '/forbidden' }: RoleGuardProps) {
   const { status, role } = useAuth();
   if (status === 'loading') return <FullPageLoader />;
+  if (status === 'denied' || status === 'expired') return <Navigate to="/access-denied" replace />;
   if (status !== 'authenticated' || !role) return <Navigate to="/login" replace />;
   if (!allowedRoles.includes(role)) return <Navigate to={fallback} replace />;
   return <>{children}</>;
